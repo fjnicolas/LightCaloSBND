@@ -1,0 +1,27 @@
+#include "opticalsimparameterisations_sbnd.fcl"
+
+BEGIN_PROLOG
+
+lightCaloSBND:
+{
+	module_type:	"LightCaloSBND"
+
+	#Input modules
+	UseRecoPE: true
+	UseRecoCharge: true
+	UseAverageVisibility: true
+	SimPhotonsModuleLabel: ["pdfastsim", "pdfastsimout"]
+	SimEnergyDepositModuleLabel: "ionandscint"
+	SimEnergyDepositProvenanceLabel: "priorSCE"
+	OpFlashesModuleLabel: ["opflashtpc0", "opflashtpc1"]
+	HitLabel: "gaushit"
+  SpacePointLabel: "pandora"
+	DetectionEfficiency: 1.
+	PDTypes: ["pmt_coated", "pmt_uncoated"]
+	PDSMapTool: {tool_type: sbndPDMapAlg}
+
+	VUVHits: @local::sbnd_vuv_RS100cm_hits_parameterization
+	VISHits: @local::sbnd_vis_RS100cm_hits_parameterization
+}
+
+END_PROLOG
