@@ -50,6 +50,9 @@
 #include "larsim/MCCheater/PhotonBackTrackerService.h"
 #include "lardataalg/DetectorInfo/DetectorClocksData.h"
 #include "lardata/DetectorInfoServices/DetectorClocksService.h"
+#include "lardata/DetectorInfoServices/DetectorPropertiesService.h"
+#include "lardataalg/DetectorInfo/DetectorPropertiesData.h"
+#include "lardataalg/DetectorInfo/DetectorPropertiesStandard.h"
 #include "larsim/Utils/TruthMatchUtils.h"
 
 #include "sbncode/OpDet/PDMapAlg.h"
@@ -92,11 +95,16 @@ public:
 
 private:
   void ResetVariables();
+  double DriftPositionToDriftTime(double x_pos);
   //Services
   art::ServiceHandle<geo::Geometry> geo;
 
   //PDS map
   std::unique_ptr<opdet::PDMapAlg> fPDSMapPtr;
+
+  double fDriftVelocity;
+  double fWirePlanePosition;
+  double fElectronLifetime;
 
   //Semi-Analytical model
   std::unique_ptr<SemiAnalyticalModel> fSemiModel;
@@ -152,9 +160,16 @@ private:
   std::vector <double> fHypoPhResolutionRecoTrack_v;
   std::vector <double> fHypoPhResolutionReco_v;
 
+  // produced photons and electrons for each energy deposition
+  std::vector<double> fEnDep_v;
+  std::vector<double> fNScintPhotons_v;
+  std::vector<double> fNDriftElectrons_v;
+
   double fDepEn;
-  double fRecoCharge;
   double fNScintPhotons;
+  double fNDriftElectrons;
+  double fRecoCharge;
+  double fRecoChargeCorr;
 
   double fOpChAverageL;
 };
@@ -174,12 +189,19 @@ opana::LightCaloSBND::LightCaloSBND(fhicl::ParameterSet const& p) :
   fDetectionEfficiency ( p.get< double >("DetectionEfficiency") ),
   fPDTypes ( p.get<std::vector<std::string>>("PDTypes",   {"pmt_coated", "pmt_uncoated"}) )
 {
+  auto const detProp = art::ServiceHandle<detinfo::DetectorPropertiesService const>()->DataForJob();
+  fDriftVelocity = detProp.DriftVelocity(); //in cm/us
+  fWirePlanePosition = std::abs( geo->Plane(1).GetCenter()[0] );
+  fElectronLifetime = detProp.ElectronLifetime();
 
   _vuv_params = p.get<fhicl::ParameterSet>("VUVHits");
   _vis_params = p.get<fhicl::ParameterSet>("VISHits");
   fSemiModel = std::make_unique<SemiAnalyticalModel>(_vuv_params, _vis_params, true, false);
 
+
   std::cout<<" LightCaloSBND module configured!\n";
+  std::cout<<"  - Drift Velocity: "<<fDriftVelocity<<" cm/mus \n";
+  std::cout<<"  - ElectronLifetime: "<<fElectronLifetime<<" mus \n";
 }
 
 
@@ -194,8 +216,15 @@ void opana::LightCaloSBND::beginJob()
   fTree->Branch("subrunID", &fsubrunID, "subrunID/i");
 
   fTree->Branch("DepEn", &fDepEn, "DepEn/d");
-  fTree->Branch("RecoCharge", &fRecoCharge, "RecoCharge/d");
   fTree->Branch("NScintPhotons", &fNScintPhotons, "NScintPhotons/d");
+  fTree->Branch("NDriftElectrons", &fNDriftElectrons, "NDriftElectrons/d");
+
+  fTree->Branch("EnDep_v",&fEnDep_v);
+  fTree->Branch("NScintPhotons_v",&fNScintPhotons_v);
+  fTree->Branch("NDriftElectrons_v",&fNDriftElectrons_v);
+
+  fTree->Branch("RecoCharge", &fRecoCharge, "RecoCharge/d");
+  fTree->Branch("RecoChargeCorr", &fRecoChargeCorr, "RecoChargeCorr/d");
 
   fTree->Branch("MeanX", &fMeanX, "MeanX/d");
   fTree->Branch("MeanY", &fMeanY, "MeanY/d");
@@ -222,6 +251,7 @@ void opana::LightCaloSBND::beginJob()
   fTree->Branch("HypoPhResolutionReco_v",&fHypoPhResolutionReco_v);
 
   fTree->Branch("OpChAverageL", &fOpChAverageL, "OpChAverageL/d");
+
 }
 
 
@@ -312,8 +342,14 @@ void opana::LightCaloSBND::analyze(art::Event const& e)
   std::cout<<":"<<SimEDHandle.provenance()->productInstanceName()<<" ----\n";
 
   for(auto &enedep:SimEDList){
+    // Fill TTree vectors
+    fEnDep_v.push_back(enedep->Energy());
+    fNScintPhotons_v.push_back(enedep->NumPhotons());
+    fNDriftElectrons_v.push_back(enedep->NumElectrons());
+
     fDepEn+=enedep->Energy();
     fNScintPhotons+=enedep->NumPhotons();
+    fNDriftElectrons+=enedep->NumElectrons();
     fMeanX+=enedep->Energy()*enedep->MidPointX();
     fMeanY+=enedep->Energy()*enedep->MidPointY();
     fMeanZ+=enedep->Energy()*enedep->MidPointZ();
@@ -368,6 +404,15 @@ void opana::LightCaloSBND::analyze(art::Event const& e)
 
       if (SPHit.at(0)->WireID().Plane==2){
         fRecoCharge+=SPHit.at(0)->Integral();
+
+        double drift_time = DriftPositionToDriftTime( SP->position().X() ) ;
+        double attenuation_corr = std::exp( drift_time/fElectronLifetime );
+
+        std::cout<<" SPx="<< SP->position().X() << " DriftTime=" << drift_time <<" AttFactor="
+        <<attenuation_corr<<std::endl;
+        fRecoChargeCorr+=attenuation_corr * SPHit.at(0)->Integral();
+
+
         fMeanX_Reco+=SPHit.at(0)->Integral() * SP->position().X();
         fMeanY_Reco+=SPHit.at(0)->Integral() * SP->position().Y();
         fMeanZ_Reco+=SPHit.at(0)->Integral() * SP->position().Z();
@@ -511,15 +556,29 @@ void opana::LightCaloSBND::ResetVariables(){
   fHypoPhResolutionReco_v.clear(); fHypoPhResolutionReco_v.resize(geo->NOpChannels(), 0);
 
   fDepEn = 0.;
-  fRecoCharge = 0.;
   fNScintPhotons = 0.;
+  fNDriftElectrons = 0.;
+
+  fRecoCharge = 0.;
+  fRecoChargeCorr = 0.;
+
   fOpChAverageL = 0.;
 
   fAverageVisibilty.clear(); fAverageVisibilty.resize(geo->NOpChannels(), 0);
   fAverageVisibiltyReco.clear(); fAverageVisibiltyReco.resize(geo->NOpChannels(), 0);
   fVisibilityMeanPoint.clear(); fVisibilityMeanPointReco.resize(geo->NOpChannels(), 0);
 
+  fEnDep_v.clear();
+  fNScintPhotons_v.clear();
+  fNDriftElectrons_v.clear();
+
 }
+
+
+double opana::LightCaloSBND::DriftPositionToDriftTime(double x_pos){
+  return ( fWirePlanePosition - std::abs(x_pos) )/fDriftVelocity;
+}
+
 
 
 DEFINE_ART_MODULE(opana::LightCaloSBND)
