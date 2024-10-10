@@ -29,7 +29,6 @@
 #include "larcore/Geometry/Geometry.h"
 // LArSoft includes
 #include "larsim/PhotonPropagation/PhotonVisibilityService.h"
-#include "larana/OpticalDetector/OpDetResponseInterface.h"
 #include "larsim/Simulation/SimListUtils.h"
 #include "lardataobj/Simulation/sim.h"
 #include "larsim/Simulation/LArG4Parameters.h"
@@ -56,8 +55,7 @@
 #include "larsim/Utils/TruthMatchUtils.h"
 
 #include "sbncode/OpDet/PDMapAlg.h"
-#include "sbndcode/OpDetAnalyzer/OpAnaUtils/OpAnaUtils.hh"
-#include "sbndcode/OpDetAnalyzer/OpAnaUtils/MCInteraction.cc"
+
 
 #include <unordered_map>
 
@@ -107,7 +105,7 @@ private:
   double fElectronLifetime;
 
   //Semi-Analytical model
-  std::unique_ptr<SemiAnalyticalModel> fSemiModel;
+  std::unique_ptr<phot::SemiAnalyticalModel> fSemiModel;
   fhicl::ParameterSet _vuv_params;
   fhicl::ParameterSet _vis_params;
 
@@ -162,6 +160,8 @@ private:
 
   // produced photons and electrons for each energy deposition
   std::vector<double> fEnDep_v;
+  std::vector<int> fEnDepPDG_v;
+  std::vector<double> fEnDepStep_v;
   std::vector<double> fNScintPhotons_v;
   std::vector<double> fNDriftElectrons_v;
 
@@ -191,12 +191,12 @@ opana::LightCaloSBND::LightCaloSBND(fhicl::ParameterSet const& p) :
 {
   auto const detProp = art::ServiceHandle<detinfo::DetectorPropertiesService const>()->DataForJob();
   fDriftVelocity = detProp.DriftVelocity(); //in cm/us
-  fWirePlanePosition = std::abs( geo->Plane(1).GetCenter()[0] );
+  fWirePlanePosition = std::abs( geo->Plane(geo::PlaneID(0, 0, 0)).GetCenter().X() );
   fElectronLifetime = detProp.ElectronLifetime();
 
   _vuv_params = p.get<fhicl::ParameterSet>("VUVHits");
   _vis_params = p.get<fhicl::ParameterSet>("VISHits");
-  fSemiModel = std::make_unique<SemiAnalyticalModel>(_vuv_params, _vis_params, true, false);
+  fSemiModel = std::make_unique<phot::SemiAnalyticalModel>(_vuv_params, _vis_params, true, false);
 
 
   std::cout<<" LightCaloSBND module configured!\n";
@@ -220,6 +220,8 @@ void opana::LightCaloSBND::beginJob()
   fTree->Branch("NDriftElectrons", &fNDriftElectrons, "NDriftElectrons/d");
 
   fTree->Branch("EnDep_v",&fEnDep_v);
+  fTree->Branch("EnDepStep_v",&fEnDepStep_v);
+  fTree->Branch("EnDepPDG_v",&fEnDepPDG_v);
   fTree->Branch("NScintPhotons_v",&fNScintPhotons_v);
   fTree->Branch("NDriftElectrons_v",&fNDriftElectrons_v);
 
@@ -344,6 +346,8 @@ void opana::LightCaloSBND::analyze(art::Event const& e)
   for(auto &enedep:SimEDList){
     // Fill TTree vectors
     fEnDep_v.push_back(enedep->Energy());
+    fEnDepStep_v.push_back(enedep->StepLength());
+    fEnDepPDG_v.push_back(enedep->PdgCode());
     fNScintPhotons_v.push_back(enedep->NumPhotons());
     fNDriftElectrons_v.push_back(enedep->NumElectrons());
 
@@ -459,11 +463,11 @@ void opana::LightCaloSBND::analyze(art::Event const& e)
   int opch_cont=0;
   for(size_t oc=0; oc<geo->NOpChannels(); oc++){
     if(fTruePh_v[oc]<=0) continue;
-    double xyz_opch[3];
-    geo->OpDetGeoFromOpChannel(oc).GetCenter(xyz_opch);
 
-    double d = std::sqrt( std::pow(xyz_opch[0]-fMeanX, 2) + std::pow(xyz_opch[1]-fMeanY, 2) + std::pow(xyz_opch[2]-fMeanZ, 2) );
-    double dReco = std::sqrt( std::pow(xyz_opch[0]-fMeanX_Reco, 2) + std::pow(xyz_opch[1]-fMeanY_Reco, 2) + std::pow(xyz_opch[2]-fMeanZ_Reco, 2) );
+    geo::Point_t xyz_opch = geo->OpDetGeoFromOpChannel(oc).GetCenter();
+
+    double d = std::sqrt( std::pow(xyz_opch.X()-fMeanX, 2) + std::pow(xyz_opch.Y()-fMeanY, 2) + std::pow(xyz_opch.Z()-fMeanZ, 2) );
+    double dReco = std::sqrt( std::pow(xyz_opch.X()-fMeanX_Reco, 2) + std::pow(xyz_opch.Y()-fMeanY_Reco, 2) + std::pow(xyz_opch.Z()-fMeanZ_Reco, 2) );
 
     double hypope_true=0, hypope_reco=0, hypope_recoflash=0, hypope_recotrack=0;
 
@@ -569,6 +573,8 @@ void opana::LightCaloSBND::ResetVariables(){
   fVisibilityMeanPoint.clear(); fVisibilityMeanPointReco.resize(geo->NOpChannels(), 0);
 
   fEnDep_v.clear();
+  fEnDepStep_v.clear();
+  fEnDepPDG_v.clear();
   fNScintPhotons_v.clear();
   fNDriftElectrons_v.clear();
 

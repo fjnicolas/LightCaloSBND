@@ -1,39 +1,36 @@
-art_make(
-MODULE_LIBRARIES
-  ${ART_FRAMEWORK_CORE}
-  ${ART_FRAMEWORK_PRINCIPAL}
-  ${ART_FRAMEWORK_SERVICES_REGISTRY}
-  ${ART_FRAMEWORK_SERVICES_OPTIONAL}
-  ${ART_ROOT_IO_TFILE_SUPPORT}
-  ${ART_ROOT_IO_TFILESERVICE_SERVICE}
-  art_Persistency_Common canvas
-  art_Persistency_Provenance canvas
-  art_Utilities canvas
-  nusimdata_SimulationBase
-  cetlib cetlib_except
-  larsim_MCCheater_ParticleInventoryService_service
-  ${MF_MESSAGELOGGER}
-  ${FHICLCPP}
-  ${ROOT_BASIC_LIB_LIST}
+set(MODULE_LIBRARIES
+    art::Framework_Principal
+    art::Framework_Services_Registry
+    art_root_io::tfile_support
+    art_root_io::TFileService_service
+    art::Persistency_Common
+    art::Persistency_Provenance
+    art::Utilities
 
-  larsim_PhotonPropagation
-  larcore_Geometry_Geometry_service
-  larcorealg_Geometry
-  lardataobj_RawData
-  lardataobj_RecoBase
-  lardataobj_MCBase
-  lardataobj_Simulation
-  nusimdata_SimulationBase
-  nug4_ParticleNavigation
+    ROOT::Tree
+    ROOT::Core
+    
+    larsim::Utils
+    larsim::PhotonPropagation
+    larsim::MCCheater_BackTrackerService_service
+    larsim::MCCheater_ParticleInventoryService_service
+    lardata::DetectorInfoServices_DetectorClocksServiceStandard_service
+    larcore::Geometry_Geometry_service
+    larcorealg::Geometry
+    lardataobj::RawData
+    lardataobj::RecoBase
+    lardataobj::MCBase
+    lardataobj::Simulation
+    nusimdata::SimulationBase
+    nug4::ParticleNavigation
 
-  sbndcode_OpDetSim
-  sbndcode_OpDetReco_OpFlash_FlashFinder
-  sbndcode_OpDetAnalyzer_OpAnaUtils
+    sbnobj::Common_Reco
+    sbndcode_OpDetSim
 
-  larsim_Utils
-  larsim_MCCheater_BackTrackerService_service
-  larsim_MCCheater_PhotonBackTrackerService_service
 )
+
+cet_build_plugin(LightCaloSBND art::Module SOURCE LightCaloSBND_module.cc LIBRARIES ${MODULE_LIBRARIES} )
+
+
 install_fhicl()
 install_source()
-FILE(GLOB fcl_files *.fcl)
